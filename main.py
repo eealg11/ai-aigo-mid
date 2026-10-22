@@ -220,3 +220,120 @@ if __name__ == '__main__':
     # Cloud Run은 PORT 환경변수를 전달하므로 이에 맞추어 포트 바인딩
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
+import os
+import traceback
+from flask import Flask, request, jsonify
+from queue_engine import CircularQueue
+
+app = Flask(__name__)
+
+# 전역 고정 길이 큐 인스턴스 (기본 크기: 5)
+global_queue = CircularQueue(capacity=5)
+
+@app.errorhandler(Exception)
+def handle_global_exception(e):
+    """
+    서버 내부에서 예외가 발생하더라도 구글 500 HTML 대신
+    클라이언트가 이해할 수 있는 JSON 형태로 에러 응답 반환
+    """
+    error_trace = traceback.format_exc()
+    print(f"[SERVER ERROR TRACE]\n{error_trace}") # Cloud Run 로그 기록용
+    
+    return jsonify({
+        "success": False,
+        "error": f"서버 내부 처리 오류: {str(e)}",
+        "detail": str(e)
+    }), 200 # 클라이언트 파싱 실패 방지를 위해 200 전달 또는 JSON 구조 유지
+
+@app.route('/api/queue', methods=['POST'])
+def queue_api():
+    """
+    고정 길이 큐 요청 처리 API
+    """
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        action = data.get('action', 'info')
+        
+        # 1) 초기화
+        if action == 'init':
+            capacity = int(data.get('capacity', 5))
+            res = global_queue.init(capacity)
+            
+        # 2) Push
+        elif action == 'push':
+            value = data.get('value')
+            if value is None:
+                return jsonify({"success": False, "error": "push 할 value 값이 필요합니다."}), 200
+            res = global_queue.push(value)
+            
+        # 3) Pop
+        elif action == 'pop':
+            res = global_queue.pop()
+            
+        # 4) Size / Capacity
+        elif action == 'size':
+            res = {"size": global_queue.size(), "capacity": global_queue.capacity}
+            
+        # 5) Full / Empty 상태 검사
+        elif action == 'status':
+            res = {
+                "is_empty": global_queue.is_empty(),
+                "is_full": global_queue.is_full()
+            }
+            
+        # 6) Peek
+        elif action == 'peek':
+            res = {"front_element": global_queue.peek()}
+            
+        # 7) Clear
+        elif action == 'clear':
+            res = global_queue.clear()
+            
+        # 8) Find index
+        elif action == 'find':
+            value = data.get('value')
+            res = {"value": value, "index": global_queue.find(value)}
+            
+        # 9) Count
+        elif action == 'count':
+            value = data.get('value')
+            res = {"value": value, "count": global_queue.count(value)}
+            
+        # 10) Contains
+        elif action == 'contains':
+            value = data.get('value')
+            res = {"value": value, "exists": global_queue.contains(value)}
+            
+        # 11) Dump (Front to Rear)
+        elif action == 'dump':
+            res = {"dump": global_queue.dump()}
+            
+        # 12) Raw Array
+        elif action == 'raw_array':
+            res = {"raw_array": global_queue.get_raw_array()}
+            
+        # 13) Info (모든 상태 종합 반환)
+        elif action == 'info':
+            res = global_queue.get_full_info()
+            
+        else:
+            return jsonify({"success": False, "error": f"알 수 없는 action: {action}"}), 200
+
+        # 전체 큐의 현재 상태를 포함하여 응답 반환
+        return jsonify({
+            "success": True,
+            "action": action,
+            "result": res,
+            "state": global_queue.get_full_info()
+        }), 200
+
+    except Exception as ex:
+        print(f"[API ERROR] {str(ex)}")
+        return jsonify({
+            "success": False,
+            "error": f"API 수행 중 예외 발생: {str(ex)}"
+        }), 200
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
