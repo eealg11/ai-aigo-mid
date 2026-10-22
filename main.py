@@ -337,3 +337,60 @@ def queue_api():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
+    <!-- ... existing code ... -->
+app = Flask(__name__)
+
+# 전역 고정 길이 큐 인스턴스 (기본 크기: 5)
+global_queue = CircularQueue(capacity=5)
+
+@app.errorhandler(Exception)
+def handle_global_exception(e):
+    """
+    서버 내부에서 예상치 못한 예외가 발생하더라도 Google Cloud Run의 
+    500 HTML 에러 페이지 대신 JSON 응답을 반환하도록 처리
+    """
+    error_trace = traceback.format_exc()
+    print(f"[CLOUD RUN CRITICAL ERROR]\n{error_trace}") # Cloud Run 로그에 상세 스택트레이스 기록
+    
+    return jsonify({
+        "success": False,
+        "error": f"서버 내부 실행 오류: {str(e)}",
+        "detail": str(e)
+    }), 200 # 클라이언트 파싱 실패 방지 및 원인 전달
+
+@app.route('/api/queue', methods=['POST'])
+def queue_api():
+    """
+    고정 길이 큐 요청 처리 API
+    """
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        action = data.get('action', 'info')
+        
+        # 1) 초기화
+<!-- ... existing code ... -->
+        # 13) Info (모든 상태 종합 반환)
+        elif action == 'info':
+            res = global_queue.get_full_info()
+            
+        else:
+            return jsonify({"success": False, "error": f"알 수 없는 action: {action}"}), 200
+
+        # 전체 큐의 현재 상태를 포함하여 응답 반환
+        return jsonify({
+            "success": True,
+            "action": action,
+            "result": res,
+            "state": global_queue.get_full_info()
+        }), 200
+
+    except Exception as ex:
+        print(f"[API EXECUTION ERROR] {str(ex)}")
+        return jsonify({
+            "success": False,
+            "error": f"API 수행 중 예외 발생: {str(ex)}"
+        }), 200
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
